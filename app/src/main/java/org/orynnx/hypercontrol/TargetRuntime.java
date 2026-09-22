@@ -295,30 +295,38 @@ final class TargetRuntime {
                 }
                 return helper;
             }));
-            Method touch = findMethodBySignature(seekBar, "onTouchEvent", MotionEvent.class);
-            if (touch != null) installed.add(module.hook(touch).intercept(chain -> {
+        }
+
+        // The slider's original onTouchEvent forwards through RelativeSeekBarInjector
+        // and then SeekBar.dispatchTouchEvent, which invokes the controller's listener.
+        // Do not replace it with setProgress(): that only changes the visual state and
+        // skips BrightnessSliderController/VolumeSliderController's side effects.
+        Class<?> helper = findClass(classLoader,
+                "miui.systemui.controlcenter.windowview.GestureDispatcher$GestureHelper",
+                "com.android.systemui.controlcenter.windowview.GestureDispatcher$GestureHelper");
+        if (helper != null) {
+            Method check = findMethodBySignature(helper, "check", boolean.class, boolean.class);
+            if (check != null) installed.add(module.hook(check).intercept(chain -> {
                 if (!read(HORIZONTAL_SLIDERS, false)) return chain.proceed();
-                MotionEvent event = (MotionEvent) chain.getArg(0);
-                if (event == null) return chain.proceed();
-                View view = (View) chain.getThisObject();
-                float usable = Math.max(1f, view.getWidth() - view.getPaddingLeft() - view.getPaddingRight());
-                float ratio = (event.getX() - view.getPaddingLeft()) / usable;
-                ratio = Math.max(0f, Math.min(1f, ratio));
-                if (event.getActionMasked() == MotionEvent.ACTION_DOWN
-                        || event.getActionMasked() == MotionEvent.ACTION_MOVE
-                        || event.getActionMasked() == MotionEvent.ACTION_UP) {
-                    if (view instanceof SeekBar) {
-                        SeekBar bar = (SeekBar) view;
-                        bar.setProgress(bar.getMin() + Math.round(ratio * (bar.getMax() - bar.getMin())));
-                        if (!loggedHorizontalTouch) {
-                            loggedHorizontalTouch = true;
-                            log(4, "[HORIZONTAL_TOUCH_APPLIED] view=" + view.getClass().getName());
-                        }
-                    }
-                    return true;
+                Object view = readFieldValue(chain.getThisObject(), helper, "view");
+                if (view != null && seekBar != null && seekBar.isInstance(view)) {
+                    // GestureDispatcher's first argument is true for a vertical drag.
+                    // The horizontal slider must win only for horizontal movement.
+                    return !((Boolean) chain.getArg(0));
                 }
                 return chain.proceed();
             }));
+        }
+    }
+
+    private static Object readFieldValue(Object object, Class<?> type, String name) {
+        try {
+            Field field = findField(type, name);
+            if (field == null) return null;
+            field.setAccessible(true);
+            return field.get(object);
+        } catch (Throwable ignored) {
+            return null;
         }
     }
     private static void configureHorizontal(Object holder) {
