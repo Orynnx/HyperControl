@@ -36,6 +36,7 @@ import io.github.libxposed.api.XposedModule;
 final class TargetRuntime {
     static final String PREFERENCES = "hypercontrol_settings";
     static final String SWAP_PANELS = "swap_panels";
+    static final String SWAP_BRIGHTNESS_VOLUME = "swap_brightness_volume";
     static final String HORIZONTAL_SLIDERS = "horizontal_sliders";
     static final String HOOK_ACTIVE = "hook_active";
 
@@ -135,7 +136,9 @@ final class TargetRuntime {
         try {
             installed.add(module.hook(distribute).intercept(chain -> {
                 Object result = chain.proceed();
-                if (read(SWAP_PANELS, false)) applyPanelSwap(chain.getThisObject());
+                if (read(SWAP_PANELS, false) || read(SWAP_BRIGHTNESS_VOLUME, false)) {
+                    applyPanelSwap(chain.getThisObject());
+                }
                 return result;
             }));
 
@@ -232,9 +235,23 @@ final class TargetRuntime {
             if (child.getClass().getSimpleName().equals("ToggleSliderView")) sliders.add(child);
         }
         if (sliders.size() != 2) return;
-        sliders.sort(Comparator.comparingInt(View::getLeft));
-        View brightness = sliders.get(0);
-        View volume = sliders.get(1);
+        View brightness = null;
+        View volume = null;
+        for (View slider : sliders) {
+            int kind = sliderKind(slider);
+            if (kind == 1) brightness = slider;
+            else if (kind == 2) volume = slider;
+        }
+        if (brightness == null || volume == null) {
+            sliders.sort(Comparator.comparingInt(View::getLeft));
+            brightness = sliders.get(0);
+            volume = sliders.get(1);
+        }
+        if (read(SWAP_BRIGHTNESS_VOLUME, false)) {
+            View temporary = brightness;
+            brightness = volume;
+            volume = temporary;
+        }
         int left = Math.min(brightness.getLeft(), volume.getLeft());
         int right = Math.max(brightness.getRight(), volume.getRight());
         int top = Math.min(brightness.getTop(), volume.getTop());
@@ -255,6 +272,33 @@ final class TargetRuntime {
                 View.MeasureSpec.makeMeasureSpec(bottom - top, View.MeasureSpec.EXACTLY));
         view.layout(left, top, right, bottom);
         view.invalidateOutline();
+    }
+
+    /** Returns 1 for brightness, 2 for volume, and 0 when a recycled item is unknown. */
+    private static int sliderKind(View item) {
+        try {
+            View slider = findChild(item, "VerticalSeekBar");
+            CharSequence description = slider == null ? null : slider.getContentDescription();
+            if (description != null) {
+                String text = description.toString().toLowerCase(java.util.Locale.ROOT);
+                if (text.contains("brightness") || text.contains("亮度")) return 1;
+                if (text.contains("volume") || text.contains("media") || text.contains("媒体")
+                        || text.contains("音量")) return 2;
+            }
+            ViewGroup.LayoutParams params = item.getLayoutParams();
+            if (params != null) {
+                Object holder = readFieldValue(params, params.getClass(), "mViewHolder");
+                if (holder != null) {
+                    Object owner = readFieldValue(holder, holder.getClass(), "owner");
+                    String name = owner == null ? "" : owner.getClass().getSimpleName();
+                    if (name.contains("BrightnessSliderController")) return 1;
+                    if (name.contains("VolumeSliderController")) return 2;
+                }
+            }
+        } catch (Throwable ignored) {
+            // Recycled views can be detached while RecyclerView is laying them out.
+        }
+        return 0;
     }
 
     private static void hookHorizontalTouch(XposedModule module, ClassLoader classLoader,
@@ -398,6 +442,8 @@ final class TargetRuntime {
 
     private static void applyPanelSwap(Object distributor) {
         try {
+            boolean swapPanels = read(SWAP_PANELS, false);
+            boolean swapBrightnessVolume = read(SWAP_BRIGHTNESS_VOLUME, false);
             List<List<Object>> panelLists = panelLists(distributor);
             if (panelLists.isEmpty()) return;
             List<Object> mediaList = null;
@@ -408,12 +454,15 @@ final class TargetRuntime {
                     sliderList = list;
                 }
             }
-            if (mediaList != null && sliderList != null && mediaList != sliderList) {
+            if (swapPanels && mediaList != null && sliderList != null && mediaList != sliderList) {
                 swapGroups(mediaList, sliderList);
             } else {
-                for (List<Object> list : panelLists) reorderInPlace(list);
+                for (List<Object> list : panelLists) {
+                    if (swapPanels) reorderInPlace(list);
+                    else if (swapBrightnessVolume) reorderSlidersInPlace(list);
+                }
             }
-            if (!loggedSwap) {
+            if (!loggedSwap && swapPanels) {
                 loggedSwap = true;
                 log(4, "[PANEL_SWAP_APPLIED] media and slider groups reordered");
             }
@@ -430,17 +479,43 @@ final class TargetRuntime {
         for (Object item : targets) insertAt = Math.min(insertAt, list.indexOf(item));
         list.removeAll(targets);
         List<Object> ordered = new ArrayList<>();
-        addMatching(ordered, targets, "BrightnessSliderController");
-        addMatching(ordered, targets, "VolumeSliderController");
+        if (read(SWAP_BRIGHTNESS_VOLUME, false)) {
+            addMatching(ordered, targets, "VolumeSliderController");
+            addMatching(ordered, targets, "BrightnessSliderController");
+        } else {
+            addMatching(ordered, targets, "BrightnessSliderController");
+            addMatching(ordered, targets, "VolumeSliderController");
+        }
         addMatching(ordered, targets, "MediaPlayerController");
         list.addAll(Math.min(insertAt, list.size()), ordered);
+    }
+
+    private static void reorderSlidersInPlace(List<Object> list) {
+        List<Object> sliders = new ArrayList<>();
+        sliders.addAll(matching(list, "BrightnessSliderController"));
+        sliders.addAll(matching(list, "VolumeSliderController"));
+        if (sliders.size() < 2) return;
+        int insertAt = indexOfFirst(list, sliders);
+        list.removeAll(sliders);
+        if (read(SWAP_BRIGHTNESS_VOLUME, false)) {
+            list.addAll(Math.min(insertAt, list.size()), matching(sliders, "VolumeSliderController"));
+            list.addAll(Math.min(insertAt + 1, list.size()), matching(sliders, "BrightnessSliderController"));
+        } else {
+            list.addAll(Math.min(insertAt, list.size()), matching(sliders, "BrightnessSliderController"));
+            list.addAll(Math.min(insertAt + 1, list.size()), matching(sliders, "VolumeSliderController"));
+        }
     }
 
     private static void swapGroups(List<Object> mediaList, List<Object> sliderList) {
         List<Object> media = matching(mediaList, "MediaPlayerController");
         List<Object> sliders = new ArrayList<>();
-        sliders.addAll(matching(sliderList, "BrightnessSliderController"));
-        sliders.addAll(matching(sliderList, "VolumeSliderController"));
+        if (read(SWAP_BRIGHTNESS_VOLUME, false)) {
+            sliders.addAll(matching(sliderList, "VolumeSliderController"));
+            sliders.addAll(matching(sliderList, "BrightnessSliderController"));
+        } else {
+            sliders.addAll(matching(sliderList, "BrightnessSliderController"));
+            sliders.addAll(matching(sliderList, "VolumeSliderController"));
+        }
         if (media.isEmpty() || sliders.isEmpty()) return;
         int mediaAt = indexOfFirst(mediaList, media);
         int sliderAt = indexOfFirst(sliderList, sliders);

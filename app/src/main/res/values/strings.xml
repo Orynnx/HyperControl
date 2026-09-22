@@ -4,8 +4,10 @@
     <string name="status_working">插件已正常工作</string>
     <string name="status_not_working">插件未正常工作</string>
     <string name="swap_title">交换媒体播放和亮度音量控件的位置</string>
+    <string name="swap_brightness_volume_title">交换亮度和音量的位置</string>
     <string name="horizontal_title">使用水平方向的控制器</string>
     <string name="restart_scope">申请 SU 并重启作用域应用</string>
+    <string name="github_project">打开 GitHub 项目地址</string>
     <string name="root_ready">已验证旧进程退出，SystemUI 已以新 PID 重启</string>
     <string name="root_denied">未获得 SU 权限</string>
     <string name="developer">Develop by Orynnx with GPT6-Astra</string>
