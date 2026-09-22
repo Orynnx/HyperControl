@@ -1,0 +1,5 @@
+minApiVersion=102
+targetApiVersion=102
+staticScope=true
+name=HyperControl
+description=调整 HyperOS 控制中心的媒体、亮度、音量布局

@@ -1,0 +1,2 @@
+-keep class org.orynnx.hypercontrol.XposedInit { *; }
+-keep class org.orynnx.hypercontrol.TargetRuntime { *; }

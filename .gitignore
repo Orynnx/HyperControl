@@ -1,0 +1,12 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+decompiled-plugin/
+reference/
+tools/
+
+classes.jar
+jadx-plugin.err
